@@ -418,11 +418,11 @@ class Topology(object):
         #     atomic_grid = AtomGrid.from_preset(10, preset="fine", rgrid=rgrid, center=atom_coords[i])
         #     atom_grids_list.append(atomic_grid.points)
         # pts = np.vstack(atom_grids_list)
-
+        
         # Use density to remove points greater than certain value (0.001 au)
         cut_off = self.func(self._points) > dens_cutoff
         pts = self._points[cut_off, :]
-
+        
         # Include points that have small gradients and close to the centers provided
         #  Useful in cases where loads of naive points are provided
         norm_grad = np.linalg.norm(self.grad(pts), axis=1)
@@ -442,7 +442,9 @@ class Topology(object):
         alpha = np.ones(len(p1))  # Initial Step-Sizes
         converged_pts = np.empty((0, 3), dtype=float)
         niter = 0
-
+        
+        count_not_changed = 0
+        prev_number_pts = len(p1)
         while len(p1) != 0 and niter < maxiter:
             # Take Newton-Ralphson Step
             p1, grad_norm1, hess = self.newton_step(p0, alpha=alpha, use_log=use_log)
@@ -471,6 +473,22 @@ class Topology(object):
             p1 = p1[didnt_converge, :]
             alpha = alpha[didnt_converge]
             grad_norm1 = grad_norm1[didnt_converge]
+            
+            # If no addtional points converged, increase count
+            if len(p1) == prev_number_pts:
+                count_not_changed += 1
+            else:
+                # If points did converge, set alpha/stepsize back to one
+                prev_number_pts = len(p1)
+                count_not_changed = 0
+                alpha[:] = 1.0
+            
+            # If the number of times points didn't converge per 30 iterations
+            #     then decrease step-size by half
+            if count_not_changed > 0 and count_not_changed % 30 == 0:
+                # Change step-size
+                print("Change stepsize ", alpha[0], count_not_changed)
+                alpha /= 2.0
 
             # Update variables for next iteration
             p0 = p1
@@ -485,11 +503,19 @@ class Topology(object):
 
                 # Try Scipy instead: Go through each pt individually.
                 #  Note this is slower but convergence is guaranteed.
+                def log_grad(pt):
+                    grad_vals = self.grad(np.array([pt]))[0]
+                    dens_vals = self.func(np.array([pt]))[0]
+
+                    grad_mat = np.outer(grad_vals, grad_vals)
+                    if dens_vals < 1e-10:
+                        dens_vals = 1e-10
+                    return grad_vals / dens_vals
+
                 other_converged_pts = []
                 for x in p1:
-                    sol = root(lambda pt: self.grad(np.array([pt]))[0], x0=x,
-                               # jac=lambda pt: self.hess(np.array([pt]))[0],
-                               method="df-sane")
+                    sol = root(log_grad, x0=x, method="anderson",
+                               options={"fatol": ftol, "disp":True, "maxiter": 1000})
                     assert sol.success, f"One of the roots did not converge using scipy {sol}"
                     other_converged_pts.append(sol.x)
 
@@ -507,7 +533,7 @@ class Topology(object):
         if np.any(final_gradients > 1e-5):
             warnings.warn("Gradient of the final critical points are not all smaller than 1e-5.",
                           RuntimeWarning)
-
+        
         # compute rank & signature of critical point
         hess = self.hess(converged_pts)
         eigs, evecs = np.linalg.eigh(hess)
