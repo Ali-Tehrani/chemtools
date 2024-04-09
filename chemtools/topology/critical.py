@@ -37,7 +37,7 @@ from chemtools.topology.ode import bond_paths_rk45
 class Topology(object):
     """Topology class for searching critical points given scalar function."""
 
-    def __init__(self, func, func_grad, func_hess, points, coords=None, n_neighbours=4):
+    def __init__(self, func, func_grad, func_hess, points=None, coords=None, n_neighbours=4):
         r"""Initialize Topology class instance.
 
         Parameters
@@ -48,29 +48,35 @@ class Topology(object):
             Method for computing the gradient vector of scalar function.
         func_hess : callable[np.ndarray(N, 3) -> np.ndarray(3, 3)]
             Method for computing the hessian matrix of scalar function.
-        points : np.ndarray(M, 3)
-            Cartesian coordinates of :math:`M` initial guess points.
+        points : np.ndarray(M, 3), optional
+            Cartesian coordinates of :math:`M` initial guess points. If `coords` is not None,
+            then the initial guesses are generated between calculating midpoints between
+            every 2, 3, and 4 atoms.
         coords : np.ndarray(N, 3), optional
             Cartesian coordinates of :math:`N` atomic centers to use as additional initial guesses.
         n_neighbours: int, optional
             Number of polyhedron vertices.
 
         """
-        if points.ndim != 2 and points.shape[1] != 3:
+        if points is not None and (points.ndim != 2 and points.shape[1] != 3):
             raise ValueError("Argument points should be a 2D-array with 3 columns!")
-        if points.shape[0] < 4:
+        if points is not None and points.shape[0] < 4:
             raise ValueError("At least 4 points are needed for critical point search!")
-        self._points = points
 
         if coords is not None and coords.ndim != 2 and coords.shape[1] != 3:
             raise ValueError("Argument coords should be a 2D-array with 3 columns.")
         if coords is not None:
+            if points is None:
+                points = self._generate_initial_guesses(coords, nbhr=10)
             self._coords = coords
-            self._kdtree = cKDTree(np.vstack((self._coords, self._points)))
+            self._kdtree = cKDTree(np.vstack((self._coords, points)))
         else:
+            if points is None:
+                raise ValueError(f"Points {points} can't be None, while {coords} is also None.")
             self._coords = None
             self._kdtree = cKDTree(points)
 
+        self._points = points
         self.func = func
         self.grad = func_grad
         self.hess = func_hess
@@ -271,13 +277,68 @@ class Topology(object):
 
         return pts_converged, final_gradients
 
+    def _generate_initial_guesses(self, atom_coords, nbhr=10):
+        r"""
+        Generates initial guesses for QTAIM points.
+
+        First adds midpoints between all atom pairs. Next grabs `nbhr` atoms from
+        each atom and computes midpoints between every three atoms, and every four
+        atoms. Finally, removes any duplicates.
+
+        Parameters
+        ----------
+        atom_coords: ndarray(M, 3)
+            The atomic coordinates of the atoms.
+        nbhr: int, optional
+            The number of neighbors to calculate the midpoints for every three, and four atoms.
+
+        Returns
+        --------
+        ndarray(N, 3)
+            Returns possible initial guesses for the Newton-Ralphson algorithm.
+
+        """
+        natoms = len(atom_coords)
+
+        # Start by adding the coordinates of the atom
+        init_pts = atom_coords.copy()
+
+        # Add the midpoint between any two atoms
+        arr1 = init_pts.copy()[:, np.newaxis, :]
+        init_pts = np.vstack((init_pts, np.reshape((arr1 + init_pts) / 2.0, (len(init_pts) * len(init_pts), 3))))
+
+        # Construct a KDTree, and search for (usually) ten neighbours at a time.
+        tree = KDTree(atom_coords)
+        nbhrs = min(natoms, nbhr)
+
+        # Go through each atom
+        for i in range(natoms):
+            # Grab `nbhrs` closest atoms of the current atom.
+            _, indices = tree.query(atom_coords[i], k=nbhrs)
+
+            # Using only the `nbhrs` atoms, construct midpoints every three atoms.
+            coords = atom_coords[indices]
+            arr1 = coords.copy()[:, np.newaxis, np.newaxis, :]
+            arr2 = coords.copy()[np.newaxis, :, np.newaxis, :]
+            init_pts = np.vstack((init_pts, np.reshape((arr1 + arr2 + coords) / 3.0, (nbhrs ** 3, 3))))
+
+            # Using only the `nbhrs` atoms, construct midpoints every four atoms.
+            arr1 = coords.copy()[:, np.newaxis, np.newaxis, np.newaxis, :]
+            arr2 = coords.copy()[np.newaxis, :, np.newaxis, np.newaxis, :]
+            arr3 = coords.copy()[np.newaxis, np.newaxis, :, np.newaxis, :]
+            init_pts = np.vstack((init_pts, np.reshape((arr1 + arr2 + arr3 + coords) / 4.0, (nbhrs ** 4, 3))))
+
+        # Remove any duplicates
+        init_pts = np.unique(np.round(init_pts, decimals=10), axis=0)
+
+        return init_pts
+
     def find_critical_points_vectorized(
         self,
-        atom_coords,
+        include_centers=None,
         xtol=1e-8,
         ftol=1e-8,
         ss_rad=0.1,
-        # u_bnd_rad=1.5,
         init_norm_cutoff=0.5,
         dens_cutoff=1e-5,
         decimal_uniq=12,
@@ -292,9 +353,8 @@ class Topology(object):
 
         Parameters
         ----------
-        atom_coords: ndarray(M, 3)
-            Atomic coordinates, used to construct atomic grids over each center as
-            initial points.
+        include_centers: ndarray(M, 3), optional
+            Used to include points near these centers (e.g. atomic coordinates)
         xtol: float, optional
             Point converges if the difference between two iterations is less than `xtol`
             in all three dimensions. Also needs to satisfy `ftol` convergence.
@@ -317,7 +377,7 @@ class Topology(object):
             Points that are `rad_uniq` apart, are grouped together and the one with the smallest
             gradient norm is picked. Used to condense points together that are close together
         use_log: float, optional
-            If true, then uses the logarithm of the electorn density. Speeds-up convergence.
+            If true, then uses the logarithm of the electron density. Speeds-up convergence.
         verbose: float, optional
             If true, then prints the sum of the norm of the gradient per iteration and number of
             points that didn't converge.
@@ -349,6 +409,7 @@ class Topology(object):
         # Construct set of points around each center
         # from grid.onedgrid import OneDGrid
         # from grid.atomgrid import AtomGrid
+        # u_bnd_rad=1.5
         # natoms = len(atom_coords)
         # atom_grids_list = []
         # rad_grid = np.arange(0.0, u_bnd_rad, ss_rad)
@@ -362,12 +423,13 @@ class Topology(object):
         cut_off = self.func(self._points) > dens_cutoff
         pts = self._points[cut_off, :]
 
-        # Include points that have small gradients and close to the centers
-        close_centers = np.any(cdist(pts, atom_coords) < 2 * ss_rad, axis=1)
+        # Include points that have small gradients and close to the centers provided
         norm_grad = np.linalg.norm(self.grad(pts), axis=1)
-        pts_decis = close_centers | (norm_grad < init_norm_cutoff)
-        pts = pts[pts_decis]
-        norm_grad = norm_grad[pts_decis]
+        if include_centers is not None:
+            close_centers = np.any(cdist(pts, include_centers) < 2 * ss_rad, axis=1)
+            pts_decis = close_centers | (norm_grad < init_norm_cutoff)
+            pts = pts[pts_decis]
+            norm_grad = norm_grad[pts_decis]
 
         if verbose:
             print(f"Start Critical Points Finding.")
