@@ -424,6 +424,7 @@ class Topology(object):
         pts = self._points[cut_off, :]
 
         # Include points that have small gradients and close to the centers provided
+        #  Useful in cases where loads of naive points are provided
         norm_grad = np.linalg.norm(self.grad(pts), axis=1)
         if include_centers is not None:
             close_centers = np.any(cdist(pts, include_centers) < 2 * ss_rad, axis=1)
