@@ -33,30 +33,38 @@ from chemtools.wrappers.grid import MolecularGrid
 from chemtools.topology.critical import Topology
 
 
-def _run_critical_point_algorithm(fchk):
+def _run_critical_point_algorithm(fchk, generate_grid=False):
     file_path = pathlib.Path(__file__).parent.resolve().__str__()[:-13]
     file_path += "data/examples/" + fchk
 
     mol = Molecule.from_file(file_path)
-    centers = mol.coordinates
 
-    # Generate points
-    pts = MolecularGrid.from_molecule(mol).points
+    if generate_grid:
+        # Generate points
+        pts = MolecularGrid.from_molecule(mol).points
+        centers = None
+    else:
+        pts = None
+        centers = mol.coordinates
 
     result = Topology(
         mol.compute_density,
         mol.compute_gradient,
         mol.compute_hessian,
-        pts
+        pts,
+        centers
     )
-    result.find_critical_points_vectorized(centers, verbose=False)
+    result.find_critical_points_vectorized(mol.coordinates, verbose=False)
     return mol, result
 
 @pytest.mark.parametrize(
-    "fchk, numb_bcp", [("h2o.fchk", 2), ("nh3.fchk", 3), ("ch4.fchk", 4)]
+    "fchk, numb_bcp, generate_grid", [
+        ("h2o.fchk", 2, True), ("nh3.fchk", 3, True), ("ch4.fchk", 4, True),
+        ("h2o.fchk", 2, False), ("nh3.fchk", 3, False), ("ch4.fchk", 4, False),
+    ]
 )
-def test_critical_points_has_correct_number(fchk, numb_bcp):
-    mol, result = _run_critical_point_algorithm(fchk)
+def test_critical_points_has_correct_number(fchk, numb_bcp, generate_grid):
+    mol, result = _run_critical_point_algorithm(fchk, generate_grid)
 
     assert len(result.bcp) == numb_bcp
     assert len(result.nna) == len(mol.coordinates)
@@ -64,7 +72,6 @@ def test_critical_points_has_correct_number(fchk, numb_bcp):
     assert len(result.ccp) == 0
     assert len(result.cps) == (len(result.nna) + len(result.bcp))
     assert result.poincare_hopf_equation == 1
-
 
 @pytest.mark.parametrize(
     "fchk, numb_bcp", [("h2o.fchk", 2), ("nh3.fchk", 3), ("ch4.fchk", 4)]
