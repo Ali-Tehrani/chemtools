@@ -146,7 +146,7 @@ class SurfaceQTAIM:
         else:
             deg = self.angular_degs
             deg = deg[i_basin] if isinstance(deg, (list, np.ndarray)) else deg
-        return AngularGrid(degree=deg, use_spherical=True)
+        return AngularGrid(degree=deg, method="spherical")
 
     def generate_angular_pts_of_basin(self, i_basin, deg=None):
         angular_grid = self.generate_angular_grid_of_basin(i_basin, deg)

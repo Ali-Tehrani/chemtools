@@ -661,7 +661,7 @@ def qtaim_surface_vectorize(
     # Determine beta-spheres and non-nuclear attractors from a smaller angular grid
     #  Degree can't be too small or else the beta-radius is too large and IAS point got classified
     #  as OAS point.
-    ang_grid = AngularGrid(degree=beta_sphere_deg, use_spherical=True)
+    ang_grid = AngularGrid(degree=beta_sphere_deg, method="spherical")
     if beta_spheres is None:
         beta_spheres, maximas, radial_grids = determine_beta_spheres_and_nna(
             beta_spheres, maximas, radial_grids, ang_grid.points, dens_func, grad_func, hess_func
@@ -710,7 +710,7 @@ def qtaim_surface_vectorize(
             if i in maximas_to_do:
                 ang = angular[i]
                 if isinstance(ang, int):
-                    angular_pts.append(AngularGrid(degree=ang, use_spherical=True).points)
+                    angular_pts.append(AngularGrid(degree=ang, method="spherical").points)
                 else:
                     angular_pts.append(ang.points)
             else:
@@ -718,7 +718,7 @@ def qtaim_surface_vectorize(
         else:
             # If it is a Non-nuclear attractor
             angular.append(99)
-            angular_pts.append(AngularGrid(degree=99, use_spherical=True).points)
+            angular_pts.append(AngularGrid(degree=99, method="spherical").points)
 
     # First step is to construct a grid that encloses all radial shells across all atoms
     points, index_to_atom, NUMB_RAYS_TO_ATOM, numb_rad_to_radial_shell = \
@@ -958,7 +958,7 @@ def hirshfeld_surface_vectorize(
         if i in maximas_to_do:
             ang = angular[i]
             if isinstance(ang, int):
-                angular_pts.append(AngularGrid(degree=ang, use_spherical=True).points)
+                angular_pts.append(AngularGrid(degree=ang, method="spherical").points)
             else:
                 angular_pts.append(ang.points)
         else:
