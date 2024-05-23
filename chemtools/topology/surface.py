@@ -27,7 +27,7 @@ Can be used for
 - analyzing the IAS and OAS.
 - integration over basins.
 """
-from chemtools.topology.utils import solve_for_oas_points, solve_intersection_of_ias_point
+from chemtools.topology.utils import solve_for_oas_points, solve_intersection_of_ias_point, solve_intersection_of_ias_point_hirshfeld
 
 import matplotlib.pyplot as plt
 from mpl_toolkits import mplot3d
@@ -164,7 +164,7 @@ class SurfaceQTAIM:
                 rgrid = self.rad_grids[i_basin]
             else:
                 rgrid = rgrid[0]
-        atom_grid = AtomGrid(rgrid, degrees=[deg], center=self.maximas[i_basin], use_spherical=True)
+        atom_grid = AtomGrid(rgrid, degrees=[deg], center=self.maximas[i_basin], method="spherical")
 
         ias_indices_a = self.ias[i_basin]
         r_limits = self.r_func[i_basin][ias_indices_a]
@@ -358,7 +358,8 @@ class SurfaceQTAIM:
                             all_pts = np.vstack((all_pts, new_pts))
         return all_pts
 
-    def construct_points_between_ias_and_oas(self, basin_ids, dens_func, grad_func, ss_0, max_ss, tol, iso_err):
+    def construct_points_between_ias_and_oas(self, basin_ids, dens_func, grad_func, ss_0, max_ss, tol, iso_err,
+                                             method="qtaim", basin_assignment_callable=None):
         r"""
         Construct points between the inner atomic surface and outer atomic surface.
 
@@ -374,6 +375,9 @@ class SurfaceQTAIM:
             List of integers specifying the index of the basins/maximas for refinement is to be performed.
         iso_err: float
             The error in solving for the isosurface points on the outer-atomic surface.
+        method: str
+            Either "qtaim" or "hirshfeld". If it is Hirshfeld-type methods,
+            then provide the basin_assignment_callable.
 
         Returns
         -------
@@ -383,6 +387,8 @@ class SurfaceQTAIM:
             of points on the IAS of `maxima`.
 
         """
+        if method == "hirshfeld" and basin_assignment_callable is None:
+            raise ValueError(f"Basin assignment callable should not be None.")
         ias_parameters = []  # parameters needed for solving IAS
         all_angular_pts = []
         indices_for_each_basin = [0]
@@ -392,7 +398,7 @@ class SurfaceQTAIM:
             oas = self.oas[i_basin]
 
             if len(oas) <= 3:
-                return np.empty((0, 3), dtype=float) 
+                return np.empty((0, 3), dtype=float)
             r_func_max = self.r_func[i_basin]
             angular_pts = self.generate_angular_pts_of_basin(i_basin)
             # Take a convex hull of both IAS and OAS seperately.
@@ -483,10 +489,18 @@ class SurfaceQTAIM:
         for i, i_basin in enumerate(basin_ids):
             angular_pts[i_basin] = all_angular_pts[i]
             ias_lengths[i_basin] = len(all_angular_pts[i])
-        r_func_new, _ = solve_intersection_of_ias_point(
-            self.maximas, ias_parameters, angular_pts, dens_func, grad_func, self.beta_spheres,
-            bnd_err=1e-5, ias_lengths=ias_lengths, ss_0=ss_0, max_ss=max_ss, tol=tol,
-        )
+
+        if method == "qtaim":
+            r_func_new, _ = solve_intersection_of_ias_point(
+                self.maximas, ias_parameters, angular_pts, dens_func, grad_func, self.beta_spheres,
+                bnd_err=1e-5, ias_lengths=ias_lengths, ss_0=ss_0, max_ss=max_ss, tol=tol,
+            )
+        elif method == "hirshfeld":
+            r_func_new, _ = solve_intersection_of_ias_point_hirshfeld(
+                self.maximas, ias_parameters, angular_pts, basin_assignment_callable, bnd_err=1e-5, ias_lengths=ias_lengths
+            )
+        else:
+            raise ValueError(f"Method {method} not recognized.")
 
         # For each basin_id, check if their density values are not less than the isosurface value.
         all_pts = []
